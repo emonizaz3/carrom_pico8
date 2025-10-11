@@ -172,15 +172,16 @@ function universal_physics()
 						pieces_pocketed_this_turn += 1
 						p_turn.must_confirm_red = true
 						red_pocketed_this_turn = true
+						add(pocketed_in_turn, p_red)
 					end
 				elseif p.name == 'white' then
 					-- white piece
 					del(all_pieces, p)
 					del(p_white, p)
-					add(pocketed_in_turn, p)
 					p.inhole=true
 					h.c = 7
 					if p_turn.piece == 'white' then
+						add(pocketed_in_turn, p)
 						p_turn.score += 1
 						pieces_pocketed_this_turn += 1
 					end
@@ -188,10 +189,10 @@ function universal_physics()
 					-- black piece
 					del(all_pieces, p)
 					del(p_black, p)
-					add(pocketed_in_turn, p)
 					p.inhole=true
 					h.c = 6
 					if p_turn.piece == 'black' then
+						add(pocketed_in_turn, p)
 						p_turn.score += 1
 						pieces_pocketed_this_turn += 1
 					end
@@ -523,7 +524,6 @@ function update_piece_animations()
 end
 
 -- This function handles all animations that occur after the initial setup,
--- such as the striker returning or penalized pieces re-entering the board.
 function run_active_animations()
 	local all_animating_pieces = {}
 	if stri.ani then add(all_animating_pieces, stri) end
@@ -571,25 +571,29 @@ end
 --player logic
 
 function switch_player()
-	-- Check for a striker foul first (indicated by a negative value)
 	if pieces_pocketed_this_turn < 0 then
 		handle_striker_foul()
 	end
-
 	local player_succeeded_this_turn = pieces_pocketed_this_turn > 0
+	if red_pocketed_this_turn then
+		local player_color_also_pocketed = false
+		for p in all(pocketed_in_turn) do
+			if p.name == p_turn.piece then
+				player_color_also_pocketed = true
+				break
+			end
+		end
+		if player_color_also_pocketed then
+			p_turn.must_confirm_red = false
+		end
 
-	-- Check for red piece confirmation status,
-	-- but ONLY if red wasn't pocketed in the turn that just ended.
-	if p_turn.must_confirm_red and not red_pocketed_this_turn then
+	elseif p_turn.must_confirm_red then
 		if player_succeeded_this_turn then
-			-- SUCCESS: Player pocketed their color, red is confirmed.
 			p_turn.must_confirm_red = false
 		else
-			-- FAILURE: Player did not pocket a piece, red must be returned.
-			p_turn.score -= p_red.value -- Revoke the points
+			p_turn.score -= p_red.value 
 			local new_x, new_y = find_open_spot_for_piece(p_red)
 			
-			-- Set up animation for the red piece to return from off-screen
 			p_red.start_x = 64
 			p_red.start_y = -10
 			p_red.ani_x = new_x
@@ -597,30 +601,24 @@ function switch_player()
 			p_red.ani_progress = 0
 			p_red.ani = true
 			p_red.inhole = false
-
-			-- Reset the player's obligation flag
 			p_turn.must_confirm_red = false
 		end
 	end
 
-	-- Now, based on the turn's outcome, decide if players switch.
-	-- The player gets another turn if they pocketed ANY piece (including red).
 	if not player_succeeded_this_turn then
 		if p_turn.name == p1.name then
 			p_turn = p2
 			stri.ani_y = 11
-			stri.ani_x = 64 -- Ensure striker returns to center x
+			stri.ani_x = 64
 			aim.ang = 270
 		else
 			p_turn = p1
 			stri.ani_y = 115
-			stri.ani_x = 64 -- Ensure striker returns to center x
+			stri.ani_x = 64
 			aim.ang = 90
 		end
 	end
 end
-
--- Checks if a specific coordinate is free of other pieces
 -- Checks if a specific coordinate is free of other pieces
 function is_position_free(x, y, r)
 	local all_game_pieces = {}
@@ -632,13 +630,10 @@ function is_position_free(x, y, r)
 	for p in all(all_game_pieces) do
 		local check_x, check_y
 
-		-- If the piece is flagged for animation, its future spot is what matters.
-		-- This prevents multiple penalized pieces from being assigned the same destination.
 		if p.ani then
 			check_x = p.ani_x
 			check_y = p.ani_y
 		else
-		-- Otherwise, check its current physical position.
 			check_x = p.x
 			check_y = p.y
 		end
@@ -646,22 +641,17 @@ function is_position_free(x, y, r)
 		local dist_sq = (x - check_x)*(x - check_x) + (y - check_y)*(y - check_y)
 		local total_r_sq = (r + p.r) * (r + p.r)
 		if dist_sq < total_r_sq then
-			return false -- Position is not free
+			return false
 		end
 	end
-	return true -- Position is free
+	return true
 end
 
--- Scans in an expanding spiral from the center to find a valid spot
 function find_open_spot_for_piece(p)
 	local cx, cy = 64, 64
-
-	-- First, check the exact center
 	if is_position_free(cx, cy, p.r) then
 		return cx, cy
 	end
-
-	-- If center is taken, search in an expanding spiral
 	local radius = p.r * 2.5 -- Start search radius
 	local angle = 0
 	for i=1, 500 do -- Limit search to prevent infinite loops
@@ -671,49 +661,35 @@ function find_open_spot_for_piece(p)
 		if is_position_free(target_x, target_y, p.r) then
 			return target_x, target_y
 		end
-
-		-- Move along the spiral
 		angle += 30 -- Check every 30 degrees
 		if angle >= 360 then
 			angle = 0
 			radius += 4 -- Increase radius for the next circle
 		end
 	end
-
 	return 64, 20 -- Failsafe position if no spot is found
 end
 
--- Manages the penalty for a striker foul by animating pieces back to the board
 function handle_striker_foul()
-	-- Loop through all pieces the player pocketed this turn
 	for p in all(pocketed_in_turn) do
-		-- Find a new home for the piece on the board.
-		-- Our updated is_position_free() will handle the logic correctly.
 		local new_x, new_y = find_open_spot_for_piece(p)
-		
-		-- Set up animation properties
-		p.start_x = p.x     -- Animate from the top-center of the screen for a clean look
+		p.start_x = p.x
 		p.start_y = p.y
 		p.ani_x = new_x
 		p.ani_y = new_y
 		p.ani_progress = 0
-		p.ani = true       -- Flag the piece for animation
-
+		p.ani = true
 		p.dx = 0
 		p.dy = 0
 		p.inhole = false
-
-		-- Add the piece back to the active list
 		if p.name == 'white' then
 			add(p_white, p)
 		elseif p.name == 'black' then
 			add(p_black, p)
 		end
-        
-        -- Since the piece was returned, the player's score for it is removed.
-        p_turn.score -= 1
-
-		-- The problematic lines that caused the flicker are now removed.
+		if p == p_red then
+			p_turn.must_confirm_red = false
+		end
 	end
 end
 
