@@ -3,7 +3,7 @@ version 42
 __lua__
 function _init()
 	stri = {sx=48,sy=32,x=64,y=115,dx=0,dy= 0,r=5, c=7,speed=0.5,accel=0.3,friction=0.015,s_ready=false,p_ready=false,ani=false,ani_x=0,ani_y=0,inhole=false}
-	p_red = {sx=32,sy=32,x=64,y=64,r=5,c=8,dx=0,dy=0,friction=0.02,inhole=false}
+	p_red = {sx=32,sy=32,x=64,y=64,r=5,c=8,dx=0,dy=0,friction=0.02,inhole=false,value=3}
 	p_white = {}
 	p_black = {}
 	holes ={
@@ -27,7 +27,7 @@ function _init()
 			local angle = (i-1) * 60
 			local ang_rad = (angle/360)*(2/j) + start_rotation
 			piece_delay += 10
-			add(p_white,{sx=0,sy=32,
+			add(p_white,{name='white',sx=0,sy=32,
 			ani_x=flr(center_x+radius*cos(ang_rad)+0.5),
 			ani_y=flr(center_y+radius*sin(ang_rad)+0.5),
 			r=5,c=7,dx=0,dy=0,friction=0.02,
@@ -40,7 +40,7 @@ function _init()
 			angle = (i-1) * 60 + 30
 			ang_rad = (angle/360)*(2/j) + start_rotation
 			piece_delay += 1
-			add(p_black,{sx=16,sy=32,
+			add(p_black,{name='black',sx=16,sy=32,
 			ani_x=flr(center_x+radius*cos(ang_rad)+0.5),
 			ani_y=flr(center_y+radius*sin(ang_rad)+0.5),
 			r=5,c=0,dx=0,dy=0,friction=0.02,
@@ -54,47 +54,43 @@ function _init()
 	-- Aiming controls
 	aim={r=20.5,c=8,ang=90,speed=0,accel=0.3,friction=0.1}
 	arrow_pause=3
+	--players data
+	p1 = {name="Player 1",score=0,piece='white'}
+	p2 = {name="Player 2",score=0,piece='black'}
+	p_turn = p2
+	pieces_pocketed_this_turn = 0
+	pocketed_in_turn = {}
+	red_pocketed_by = nil
+	red_needs_confirmation = false
+	red_pocketed_this_turn = false
 end
 
 function _update60()
-	-- Run the initial piece falling animation first
 	if ani_timer <= 150 then
 		update_piece_animations()
-
-	-- Handle the striker's return animation after a shot
-	elseif stri.ani then
-		stri_animation()
-
-	-- It's the player's turn to act
+	elseif not all_ani_stopped() then
+		run_active_animations()
 	elseif stri.p_ready then
 		if stri.s_ready then
-			-- State: Aiming and shooting
 			aim_con()
 			shoot_con()
 		else
-			-- State: Moving the striker
 			move_con()
 		end
-
-	-- It's not the player's turn; run the physics simulation
 	else
 		if all_ani_stopped() then
 			local is_finished = universal_physics()
 			if is_finished then
-				-- All pieces stopped, reset for the next turn
-				stri.p_ready = false -- Keep controls off until animation is done
-				aim.ang = 90
+				stri.p_ready = false
 				aim.speed = 0
 				aim.r = 20.5
-				
-				-- Setup the return animation for the striker
 				stri.start_x = stri.x
 				stri.start_y = stri.y
 				stri.ani_x = 64
-				stri.ani_y = 115
 				stri.ani_progress = 0
 				stri.ani = true
 				stri.inhole=false
+				switch_player()
 			end
 		end
 	end
@@ -103,18 +99,11 @@ end
 function _draw()
 	cls(13)
 	map(0,0,0,0,16,16)
-
-	-- Draw holes and their effects
 	for h in all(holes) do draw_hole(h) end
 	for h in all(holes) do hole_fall_effect(h,h.c) end
-
-	-- Draw UI elements based on state
 	if stri.p_ready and stri.s_ready then
-		-- Draw aiming line and power bar only when aiming
 		draw_aimline(stri.x,stri.y,aim.r+8,aim.ang,aim.c) --8 is offset
 	end
-	
-	-- Draw all game pieces
 	for p in all(p_white) do 
 		if p.ani then draw_piece(p, 2) else draw_piece(p) end
 	end
@@ -125,24 +114,23 @@ function _draw()
 		draw_piece(p_red)
 	end
 	
-	-- Refactored striker drawing logic
 	if stri.ani then
-		-- Striker is animating back to the start line
 		draw_piece(stri, 2)
 	elseif not stri.inhole then
 		if stri.p_ready and not stri.s_ready then
-			-- Player is moving the striker; show it and the arrows
-			draw_piece(stri, 1) -- Use highlight '1' to show it's active
+			draw_piece(stri, 1)
 			if time()>arrow_pause then
 				draw_movement_arrows()
 			end
 		else
-			-- Draw striker normally (e.g., while aiming or during physics sim)
 			draw_piece(stri)
 		end
 	end
 	-- print(stri.p_ready,0,0)
 	-- print(stri.s_ready,0,8)
+	print(p_turn.name,0,0)
+	print(p_red.inhole,0,8)
+	print(pieces_pocketed_this_turn,0,16)
 end
   
 
@@ -169,36 +157,44 @@ function universal_physics()
 				h.effect_f=30
 				-- remove piece from play
 				if p == stri then
-					-- reset striker position if it falls in a hole
-					-- stri.x = 64
-					-- stri.y = 115
 					stri.dx = 0
 					stri.dy = 0
 					stri.inhole=true
-					-- stri.p_ready = false
-					-- stri.s_ready = false
 					h.c = 12
+					pieces_pocketed_this_turn = -999
 				elseif p == p_red then
-					-- reset red piece to center if it falls in a hole
 					del(all_pieces, p)
 					p.inhole=true
-					p_red.x = 64
-					p_red.y = 64
-					p_red.dx = 0
-					p_red.dy = 0
 					h.c = 8
-				elseif p.c == 7 then
+					-- Red piece logic
+					if not (p1.must_confirm_red or p2.must_confirm_red) then
+						p_turn.score += p_red.value
+						pieces_pocketed_this_turn += 1
+						p_turn.must_confirm_red = true
+						red_pocketed_this_turn = true
+					end
+				elseif p.name == 'white' then
 					-- white piece
 					del(all_pieces, p)
 					del(p_white, p)
+					add(pocketed_in_turn, p)
 					p.inhole=true
 					h.c = 7
+					if p_turn.piece == 'white' then
+						p_turn.score += 1
+						pieces_pocketed_this_turn += 1
+					end
 				else
 					-- black piece
 					del(all_pieces, p)
 					del(p_black, p)
+					add(pocketed_in_turn, p)
 					p.inhole=true
 					h.c = 6
+					if p_turn.piece == 'black' then
+						p_turn.score += 1
+						pieces_pocketed_this_turn += 1
+					end
 				end
 			end
 		end
@@ -358,6 +354,9 @@ end
 function shoot_con()
 	-- Fire the shot and hand control over to the physics engine
 	if btnp(🅾️) then
+		red_pocketed_this_turn = false
+		pieces_pocketed_this_turn = 0
+		pocketed_in_turn = {}
 		local power = aim.r / 2.5 -- adjusted for better feel
 		power *= stri.speed
 		local angle = aim.ang / 360
@@ -522,24 +521,41 @@ function update_piece_animations()
 	end
 	printh(ani_timer)
 end
-function stri_animation()
-	stri.ani_progress = min(1, stri.ani_progress + 0.03)
-	local eased_t = ease_in_out(stri.ani_progress)
-	stri.x = stri.start_x + (stri.ani_x - stri.start_x) * eased_t
-	stri.y = stri.start_y + (stri.ani_y - stri.start_y) * eased_t
-	
-	if stri.ani_progress == 1 then
-		stri.x = stri.ani_x
-		stri.y = stri.ani_y
-		stri.ani = false
+
+-- This function handles all animations that occur after the initial setup,
+-- such as the striker returning or penalized pieces re-entering the board.
+function run_active_animations()
+	local all_animating_pieces = {}
+	if stri.ani then add(all_animating_pieces, stri) end
+	if p_red.ani then add(all_animating_pieces, p_red) end
+	for p in all(p_white) do 
+		if p.ani then add(all_animating_pieces, p) end
+	end
+	for p in all(p_black) do
+		if p.ani then add(all_animating_pieces, p) end
+	end
+
+	for p in all(all_animating_pieces) do
+		p.ani_progress = min(1, p.ani_progress + 0.03)
+		local eased_t = ease_in_out(p.ani_progress)
+		p.x = p.start_x + (p.ani_x - p.start_x) * eased_t
+		p.y = p.start_y + (p.ani_y - p.start_y) * eased_t
 		
-		-- Animation finished, give control to the player for movement
-		stri.p_ready = true
-		stri.s_ready = false
-		
-		arrow_pause=time()+3
+		if p.ani_progress == 1 then
+			p.x = p.ani_x
+			p.y = p.ani_y
+			p.ani = false
+			
+			if p == stri then
+				-- Animation finished, give control to the player for movement
+				stri.p_ready = true
+				stri.s_ready = false
+				arrow_pause=time()+3
+			end
+		end
 	end
 end
+
 -- Smoother easing function (Quadratic Ease In-Out)
 function ease_in_out(t)
 	t = max(0, min(1, t))
@@ -551,8 +567,155 @@ function ease_in_out(t)
 	end
 end
 
+-->8
+--player logic
 
+function switch_player()
+	-- Check for a striker foul first (indicated by a negative value)
+	if pieces_pocketed_this_turn < 0 then
+		handle_striker_foul()
+	end
 
+	local player_succeeded_this_turn = pieces_pocketed_this_turn > 0
+
+	-- Check for red piece confirmation status,
+	-- but ONLY if red wasn't pocketed in the turn that just ended.
+	if p_turn.must_confirm_red and not red_pocketed_this_turn then
+		if player_succeeded_this_turn then
+			-- SUCCESS: Player pocketed their color, red is confirmed.
+			p_turn.must_confirm_red = false
+		else
+			-- FAILURE: Player did not pocket a piece, red must be returned.
+			p_turn.score -= p_red.value -- Revoke the points
+			local new_x, new_y = find_open_spot_for_piece(p_red)
+			
+			-- Set up animation for the red piece to return from off-screen
+			p_red.start_x = 64
+			p_red.start_y = -10
+			p_red.ani_x = new_x
+			p_red.ani_y = new_y
+			p_red.ani_progress = 0
+			p_red.ani = true
+			p_red.inhole = false
+
+			-- Reset the player's obligation flag
+			p_turn.must_confirm_red = false
+		end
+	end
+
+	-- Now, based on the turn's outcome, decide if players switch.
+	-- The player gets another turn if they pocketed ANY piece (including red).
+	if not player_succeeded_this_turn then
+		if p_turn.name == p1.name then
+			p_turn = p2
+			stri.ani_y = 11
+			stri.ani_x = 64 -- Ensure striker returns to center x
+			aim.ang = 270
+		else
+			p_turn = p1
+			stri.ani_y = 115
+			stri.ani_x = 64 -- Ensure striker returns to center x
+			aim.ang = 90
+		end
+	end
+end
+
+-- Checks if a specific coordinate is free of other pieces
+-- Checks if a specific coordinate is free of other pieces
+function is_position_free(x, y, r)
+	local all_game_pieces = {}
+	if not stri.inhole then add(all_game_pieces, stri) end
+	if not p_red.inhole then add(all_game_pieces, p_red) end
+	for p in all(p_white) do add(all_game_pieces, p) end
+	for p in all(p_black) do add(all_game_pieces, p) end
+
+	for p in all(all_game_pieces) do
+		local check_x, check_y
+
+		-- If the piece is flagged for animation, its future spot is what matters.
+		-- This prevents multiple penalized pieces from being assigned the same destination.
+		if p.ani then
+			check_x = p.ani_x
+			check_y = p.ani_y
+		else
+		-- Otherwise, check its current physical position.
+			check_x = p.x
+			check_y = p.y
+		end
+
+		local dist_sq = (x - check_x)*(x - check_x) + (y - check_y)*(y - check_y)
+		local total_r_sq = (r + p.r) * (r + p.r)
+		if dist_sq < total_r_sq then
+			return false -- Position is not free
+		end
+	end
+	return true -- Position is free
+end
+
+-- Scans in an expanding spiral from the center to find a valid spot
+function find_open_spot_for_piece(p)
+	local cx, cy = 64, 64
+
+	-- First, check the exact center
+	if is_position_free(cx, cy, p.r) then
+		return cx, cy
+	end
+
+	-- If center is taken, search in an expanding spiral
+	local radius = p.r * 2.5 -- Start search radius
+	local angle = 0
+	for i=1, 500 do -- Limit search to prevent infinite loops
+		local target_x = cx + radius * cos(angle/360)
+		local target_y = cy + radius * sin(angle/360)
+
+		if is_position_free(target_x, target_y, p.r) then
+			return target_x, target_y
+		end
+
+		-- Move along the spiral
+		angle += 30 -- Check every 30 degrees
+		if angle >= 360 then
+			angle = 0
+			radius += 4 -- Increase radius for the next circle
+		end
+	end
+
+	return 64, 20 -- Failsafe position if no spot is found
+end
+
+-- Manages the penalty for a striker foul by animating pieces back to the board
+function handle_striker_foul()
+	-- Loop through all pieces the player pocketed this turn
+	for p in all(pocketed_in_turn) do
+		-- Find a new home for the piece on the board.
+		-- Our updated is_position_free() will handle the logic correctly.
+		local new_x, new_y = find_open_spot_for_piece(p)
+		
+		-- Set up animation properties
+		p.start_x = p.x     -- Animate from the top-center of the screen for a clean look
+		p.start_y = p.y
+		p.ani_x = new_x
+		p.ani_y = new_y
+		p.ani_progress = 0
+		p.ani = true       -- Flag the piece for animation
+
+		p.dx = 0
+		p.dy = 0
+		p.inhole = false
+
+		-- Add the piece back to the active list
+		if p.name == 'white' then
+			add(p_white, p)
+		elseif p.name == 'black' then
+			add(p_black, p)
+		end
+        
+        -- Since the piece was returned, the player's score for it is removed.
+        p_turn.score -= 1
+
+		-- The problematic lines that caused the flicker are now removed.
+	end
+end
 
 __gfx__
 00000000dddddddddffffffdffffffffdfffffffdfddfffddfffddfddddddddddddddddd00000000ffffffffffffddffffddfffffffffffffffffffddfffffff
