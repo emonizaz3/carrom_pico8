@@ -1,11 +1,14 @@
 pico-8 cartridge // http://www.pico-8.com
 version 42
 __lua__
+
 function _init()
 	stri = {sx=48,sy=32,x=64,y=115,dx=0,dy= 0,r=5, c=7,speed=0.5,accel=0.3,friction=0.015,s_ready=false,p_ready=false,ani=false,ani_x=0,ani_y=0,inhole=false}
 	p_red = {sx=32,sy=32,x=64,y=64,r=5,c=8,dx=0,dy=0,friction=0.02,inhole=false,value=3}
 	p_white = {}
 	p_black = {}
+	p_white_pocketed = {}
+	p_black_pocketed = {}
 	holes ={
 		{x=5,y=5,r=6,c=7,effect_f=0},
 		{x=5,y=122,r=6,c=7,effect_f=0},
@@ -128,9 +131,9 @@ function _draw()
 	end
 	-- print(stri.p_ready,0,0)
 	-- print(stri.s_ready,0,8)
-	print(p_turn.name,0,0)
-	print(p_red.inhole,0,8)
-	print(pieces_pocketed_this_turn,0,16)
+	-- print(p_turn.name,0,0)
+	-- print(p_red.inhole,0,8)
+	-- print(pieces_pocketed_this_turn,0,16)
 end
   
 
@@ -178,6 +181,7 @@ function universal_physics()
 					-- white piece
 					del(all_pieces, p)
 					del(p_white, p)
+					add(p_white_pocketed, p)
 					p.inhole=true
 					h.c = 7
 					if p_turn.piece == 'white' then
@@ -189,6 +193,7 @@ function universal_physics()
 					-- black piece
 					del(all_pieces, p)
 					del(p_black, p)
+					add(p_black_pocketed, p)
 					p.inhole=true
 					h.c = 6
 					if p_turn.piece == 'black' then
@@ -594,8 +599,8 @@ function switch_player()
 			p_turn.score -= p_red.value 
 			local new_x, new_y = find_open_spot_for_piece(p_red)
 			
-			p_red.start_x = 64
-			p_red.start_y = -10
+			p_red.start_x = p_red.x
+			p_red.start_y = p_red.y
 			p_red.ani_x = new_x
 			p_red.ani_y = new_y
 			p_red.ani_progress = 0
@@ -671,6 +676,27 @@ function find_open_spot_for_piece(p)
 end
 
 function handle_striker_foul()
+	for p in all(pocketed_in_turn) do
+		if p.name == 'white' then
+			del(p_white_pocketed, p)
+		elseif p.name == 'black' then
+			del(p_black_pocketed, p)
+		end
+	end
+
+	local active_list, pocketed_list
+	if p_turn.piece == 'white' then
+		active_list = p_white
+		pocketed_list = p_white_pocketed
+	else
+		active_list = p_black
+		pocketed_list = p_black_pocketed
+	end
+
+	if #active_list < 9 and #pocketed_list > 0 then
+		add(pocketed_in_turn, deli(pocketed_list, 1))
+	end
+
 	for p in all(pocketed_in_turn) do
 		local new_x, new_y = find_open_spot_for_piece(p)
 		p.start_x = p.x
