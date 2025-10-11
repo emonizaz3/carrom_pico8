@@ -59,13 +59,20 @@ function _init()
 	arrow_pause=3
 	--players data
 	p1 = {name="Player 1",score=0,piece='white'}
-	p2 = {name="Player 2",score=0,piece='black'}
+	p2 = {name="Player 2",score=0,piece='black', is_ai=true}
 	p_turn = p2
 	pieces_pocketed_this_turn = 0
 	pocketed_in_turn = {}
 	red_pocketed_by = nil
 	red_needs_confirmation = false
 	red_pocketed_this_turn = false
+	
+	-- AI specific variables
+	ai_state = "positioning" -- "positioning", "aiming", "shooting"
+	ai_target_pos = {}
+	ai_target_angle = 0
+	ai_shot_power = 0
+	ai_timer = 0
 end
 
 function _update60()
@@ -73,23 +80,28 @@ function _update60()
 		update_piece_animations()
 	elseif not all_ani_stopped() then
 		run_active_animations()
-	elseif stri.p_ready then
-		if stri.s_ready then
-			aim_con()
-			shoot_con()
+	elseif stri.p_ready then -- Turn setup phase (for both Player and AI)
+		if p_turn.is_ai then
+			ai_opponent_turn()
 		else
-			move_con()
+			-- Player controls
+			if stri.s_ready then
+				aim_con()
+				shoot_con()
+			else
+				move_con()
+			end
 		end
-	else
+	else -- Physics simulation phase (after a shot is taken)
 		if all_ani_stopped() then
 			local is_finished = universal_physics()
 			if is_finished then
+				-- Turn is over, reset striker and switch players
 				stri.p_ready = false
 				aim.speed = 0
 				aim.r = 20.5
 				stri.start_x = stri.x
 				stri.start_y = stri.y
-				stri.ani_x = 64
 				stri.ani_progress = 0
 				stri.ani = true
 				stri.inhole=false
@@ -104,7 +116,7 @@ function _draw()
 	map(0,0,0,0,16,16)
 	for h in all(holes) do draw_hole(h) end
 	for h in all(holes) do hole_fall_effect(h,h.c) end
-	if stri.p_ready and stri.s_ready then
+	if stri.p_ready and stri.s_ready and (not p_turn.is_ai or ai_state == "aiming") then
 		draw_aimline(stri.x,stri.y,aim.r+8,aim.ang,aim.c) --8 is offset
 	end
 	for p in all(p_white) do 
@@ -555,7 +567,11 @@ function run_active_animations()
 				-- Animation finished, give control to the player for movement
 				stri.p_ready = true
 				stri.s_ready = false
-				arrow_pause=time()+3
+				if p_turn.is_ai then
+					ai_state = "positioning"
+				else
+					arrow_pause=time()+3
+				end
 			end
 		end
 	end
@@ -717,6 +733,169 @@ function handle_striker_foul()
 			p_turn.must_confirm_red = false
 		end
 	end
+end
+
+-->8
+-- AI Logic
+function ai_opponent_turn()
+    if ai_state == "positioning" then
+        -- Find the best position for the striker and the best shot
+        local best_shot = find_best_shot()
+        if best_shot then
+            stri.x = best_shot.striker_x
+            ai_target_angle = best_shot.angle
+            ai_shot_power = best_shot.power
+            ai_state = "aiming"
+            ai_timer = time() + 1 -- 1 second to aim
+        else
+            -- No good shot found, position randomly and shoot
+            stri.x = 32 + rnd(64)
+            ai_target_angle = 270 + rnd(20) - 10
+            ai_shot_power = 30 + rnd(20)
+            ai_state = "aiming"
+            ai_timer = time() + 1 
+        end
+        stri.s_ready = true
+    elseif ai_state == "aiming" then
+        -- Smoothly move the aim to the target angle
+        local angle_diff = ai_target_angle - aim.ang
+        aim.ang += angle_diff * 0.1
+        aim.r = ai_shot_power
+
+        if time() > ai_timer then
+            ai_state = "shooting"
+            ai_timer = time() + 0.5 -- 0.5 second before shooting
+        end
+    elseif ai_state == "shooting" then
+        if time() > ai_timer then
+            -- Fire the shot
+            red_pocketed_this_turn = false
+            pieces_pocketed_this_turn = 0
+            pocketed_in_turn = {}
+            local power = aim.r / 2.5
+            power *= stri.speed
+            local angle = aim.ang / 360
+            stri.dx = cos(angle) * power
+            stri.dy = sin(angle) * power
+            
+            stri.p_ready = false 
+            stri.s_ready = false 
+            sfx(0)
+            
+            ai_state = "waiting" -- Wait for physics to resolve
+        end
+    end
+end
+
+function find_best_shot()
+    local best_shot = nil
+    local best_score = -10000 -- Start with a very low score
+
+    -- Iterate through all possible striker positions
+    for sx = 21, 107, 4 do -- Check more positions
+        -- Iterate through all black pieces (or the red piece)
+        local target_pieces = {}
+        for p in all(p_black) do add(target_pieces, p) end
+        if not p_red.inhole then add(target_pieces, p_red) end
+
+        for p in all(target_pieces) do
+            -- Iterate through all holes
+            for h in all(holes) do
+                -- Calculate the score for this shot
+                local score, target_pos = evaluate_shot(sx, stri.y, p, h)
+                if score > best_score then
+                    best_score = score
+                    
+                    -- Calculate angle and power to hit the target spot
+                    local dx = target_pos.x - sx
+                    local dy = target_pos.y - stri.y
+                    local dist = sqrt(dx*dx + dy*dy)
+					local pico_angle = atan2(dx, dy) -- PICO-8's atan2 is special
+
+                    best_shot = {
+                        striker_x = sx,
+                        angle = pico_angle * 360, -- Convert PICO-8 angle (0..1) to degrees
+                        power = mid(20, dist * 0.7, 70), -- Clamp power to reasonable values
+                        score = score
+                    }
+                end
+            end
+        end
+    end
+    return best_shot
+end
+
+function evaluate_shot(striker_x, striker_y, piece, hole)
+    -- The ideal position to hit the piece to sink it into the hole
+    local vec_x = hole.x - piece.x
+    local vec_y = hole.y - piece.y
+    local len = sqrt(vec_x*vec_x + vec_y*vec_y)
+    -- Normalize vector and position target behind the piece
+    local target_x = piece.x - (vec_x/len) * (stri.r + piece.r)
+    local target_y = piece.y - (vec_y/len) * (stri.r + piece.r)
+
+    local score = 1000
+
+    -- 1. Penalize distance from striker to target spot
+    local dist_to_target = sqrt((target_x - striker_x)^2 + (target_y - striker_y)^2)
+    score -= dist_to_target * 3
+
+    -- 2. Penalize distance of piece from the hole
+    score -= len * 2
+    
+    -- 3. Heavily penalize any obstructions
+    local all_pieces = {}
+	for p in all(p_white) do add(all_pieces, p) end
+	for p in all(p_black) do add(all_pieces, p) end
+    if not p_red.inhole then add(all_pieces, p_red) end
+
+    -- Check path from striker to the target spot
+    for other_p in all(all_pieces) do
+        if other_p != piece then
+            if is_path_obstructed(striker_x, striker_y, target_x, target_y, other_p) then
+                score -= 500
+            end
+        end
+    end
+
+    -- Check path from piece to hole
+    for other_p in all(all_pieces) do
+        if other_p != piece then
+            if is_path_obstructed(piece.x, piece.y, hole.x, hole.y, other_p) then
+                score -= 400
+            end
+        end
+    end
+
+	-- Bonus for targeting the red piece
+	if piece == p_red then
+		score += 200
+	end
+    
+    return score, {x=target_x, y=target_y}
+end
+
+function is_path_obstructed(x1, y1, x2, y2, obs)
+    local line_dx = x2 - x1
+    local line_dy = y2 - y1
+    local len_sq = line_dx*line_dx + line_dy*line_dy
+    if len_sq == 0 then return false end
+    
+    -- Project the obstacle's center onto the line
+    local t = ((obs.x - x1) * line_dx + (obs.y - y1) * line_dy) / len_sq
+    
+    -- t<0 means the obstacle is behind the start point
+    -- t>1 means the obstacle is past the end point
+    -- We only care about obstacles between the points
+    if t < 0 or t > 1 then return false end
+    
+    local closest_x = x1 + t * line_dx
+    local closest_y = y1 + t * line_dy
+    
+    local dist_from_line_sq = (obs.x - closest_x)^2 + (obs.y - closest_y)^2
+    
+    -- Check if the distance from the line is less than the combined radii
+    return dist_from_line_sq < (obs.r + stri.r)^2
 end
 
 __gfx__
