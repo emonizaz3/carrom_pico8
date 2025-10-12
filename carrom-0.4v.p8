@@ -182,10 +182,10 @@ function universal_physics()
 					p.inhole=true
 					h.c = 8
 					-- Red piece logic
-					if not (p1.must_confirm_red or p2.must_confirm_red) then
+					if not red_needs_confirmation then
 						p_turn.score += p_red.value
 						pieces_pocketed_this_turn += 1
-						p_turn.must_confirm_red = true
+						red_needs_confirmation = true
 						red_pocketed_this_turn = true
 						add(pocketed_in_turn, p_red)
 					end
@@ -587,6 +587,9 @@ function ease_in_out(t)
 		return -0.5 * (t * (t - 2) - 1)
 	end
 end
+function sign(n)
+  return n > 0 and 1 or n < 0 and -1 or 0
+end
 
 -->8
 --player logic
@@ -605,12 +608,12 @@ function switch_player()
 			end
 		end
 		if player_color_also_pocketed then
-			p_turn.must_confirm_red = false
+			red_needs_confirmation = false
 		end
 
-	elseif p_turn.must_confirm_red then
+	elseif red_needs_confirmation then
 		if player_succeeded_this_turn then
-			p_turn.must_confirm_red = false
+			red_needs_confirmation = false
 		else
 			p_turn.score -= p_red.value 
 			local new_x, new_y = find_open_spot_for_piece(p_red)
@@ -622,7 +625,7 @@ function switch_player()
 			p_red.ani_progress = 0
 			p_red.ani = true
 			p_red.inhole = false
-			p_turn.must_confirm_red = false
+			red_needs_confirmation = false
 		end
 	end
 
@@ -730,7 +733,7 @@ function handle_striker_foul()
 			add(p_black, p)
 		end
 		if p == p_red then
-			p_turn.must_confirm_red = false
+			red_needs_confirmation = false
 		end
 	end
 end
@@ -756,15 +759,19 @@ function ai_opponent_turn()
             ai_timer = time() + 1 
         end
         stri.s_ready = true
-    elseif ai_state == "aiming" then
-        -- Smoothly move the aim to the target angle
+	elseif ai_state == "aiming" then
         local angle_diff = ai_target_angle - aim.ang
+        if (abs(angle_diff) > 180) angle_diff -= sign(angle_diff) * 360
+
         aim.ang += angle_diff * 0.1
         aim.r = ai_shot_power
-
-        if time() > ai_timer then
+		
+        local has_waited_long_enough = time() > ai_timer
+        local is_aim_accurate = abs(angle_diff) < 5
+        local safety_timer_expired = time() > ai_timer + 2.0 -- 2 seconds after aiming started
+        if (has_waited_long_enough and is_aim_accurate) or safety_timer_expired then
             ai_state = "shooting"
-            ai_timer = time() + 0.5 -- 0.5 second before shooting
+            ai_timer = time() + 0.5
         end
     elseif ai_state == "shooting" then
         if time() > ai_timer then
@@ -786,36 +793,43 @@ function ai_opponent_turn()
         end
     end
 end
-
 function find_best_shot()
     local best_shot = nil
-    local best_score = -10000 -- Start with a very low score
+    local best_score = -10000 
 
     -- Iterate through all possible striker positions
-    for sx = 21, 107, 4 do -- Check more positions
-        -- Iterate through all black pieces (or the red piece)
+    for sx = 21, 107, 1 do
         local target_pieces = {}
-        for p in all(p_black) do add(target_pieces, p) end
-        if not p_red.inhole then add(target_pieces, p_red) end
+        local player_pieces = {}
 
-        for p in all(target_pieces) do
-            -- Iterate through all holes
+        if p_turn.piece == 'white' then
+            player_pieces = p_white
+            player_pieces = p_black
+        end
+        for p in all(player_pieces) do
+            add(target_pieces, p)
+        end
+        if not p_red.inhole then
+            add(target_pieces, p_red)
+        end
+
+
+        -- The rest of the function continues as before, but now with the correct targets.
+        for p_target in all(target_pieces) do
             for h in all(holes) do
-                -- Calculate the score for this shot
-                local score, target_pos = evaluate_shot(sx, stri.y, p, h)
+                local score, target_pos = evaluate_shot(sx, stri.y, p_target, h)
                 if score > best_score then
                     best_score = score
                     
-                    -- Calculate angle and power to hit the target spot
                     local dx = target_pos.x - sx
                     local dy = target_pos.y - stri.y
                     local dist = sqrt(dx*dx + dy*dy)
-					local pico_angle = atan2(dx, dy) -- PICO-8's atan2 is special
+					local pico_angle = atan2(dx, dy)
 
                     best_shot = {
                         striker_x = sx,
-                        angle = pico_angle * 360, -- Convert PICO-8 angle (0..1) to degrees
-                        power = mid(20, dist * 0.7, 70), -- Clamp power to reasonable values
+                        angle = pico_angle * 360,
+                        power = mid(20, dist * 0.7, 70),
                         score = score
                     }
                 end
@@ -826,11 +840,11 @@ function find_best_shot()
 end
 
 function evaluate_shot(striker_x, striker_y, piece, hole)
-    -- The ideal position to hit the piece to sink it into the hole
     local vec_x = hole.x - piece.x
     local vec_y = hole.y - piece.y
     local len = sqrt(vec_x*vec_x + vec_y*vec_y)
-    -- Normalize vector and position target behind the piece
+    if len == 0 then return -10000, {} end -- Prevent division by zero
+
     local target_x = piece.x - (vec_x/len) * (stri.r + piece.r)
     local target_y = piece.y - (vec_y/len) * (stri.r + piece.r)
 
@@ -853,7 +867,8 @@ function evaluate_shot(striker_x, striker_y, piece, hole)
     for other_p in all(all_pieces) do
         if other_p != piece then
             if is_path_obstructed(striker_x, striker_y, target_x, target_y, other_p) then
-                score -= 500
+                score -= 1200
+                break 
             end
         end
     end
@@ -862,7 +877,8 @@ function evaluate_shot(striker_x, striker_y, piece, hole)
     for other_p in all(all_pieces) do
         if other_p != piece then
             if is_path_obstructed(piece.x, piece.y, hole.x, hole.y, other_p) then
-                score -= 400
+                score -= 1200 
+                break 
             end
         end
     end
@@ -880,21 +896,11 @@ function is_path_obstructed(x1, y1, x2, y2, obs)
     local line_dy = y2 - y1
     local len_sq = line_dx*line_dx + line_dy*line_dy
     if len_sq == 0 then return false end
-    
-    -- Project the obstacle's center onto the line
     local t = ((obs.x - x1) * line_dx + (obs.y - y1) * line_dy) / len_sq
-    
-    -- t<0 means the obstacle is behind the start point
-    -- t>1 means the obstacle is past the end point
-    -- We only care about obstacles between the points
     if t < 0 or t > 1 then return false end
-    
     local closest_x = x1 + t * line_dx
     local closest_y = y1 + t * line_dy
-    
     local dist_from_line_sq = (obs.x - closest_x)^2 + (obs.y - closest_y)^2
-    
-    -- Check if the distance from the line is less than the combined radii
     return dist_from_line_sq < (obs.r + stri.r)^2
 end
 
