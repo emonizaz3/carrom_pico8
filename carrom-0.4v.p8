@@ -293,7 +293,6 @@ function check_collision(p1, p2)
         p2.x += overlap * nx
         p2.y += overlap * ny
 
-        -- elastic collision response
         local kx = p1.dx - p2.dx
         local ky = p1.dy - p2.dy
         local p = (kx * nx + ky * ny)
