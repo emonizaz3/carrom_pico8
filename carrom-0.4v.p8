@@ -3,6 +3,37 @@ version 42
 __lua__
 -- carrom game
 function _init()
+	game_state = "menu"
+	menu_selection = 1
+end
+
+function _update60()
+	if game_state == "menu" then
+		menu_update()
+	elseif game_state == "game" then
+		game_update()
+	elseif game_state == "paused" then
+		pause_update()
+	elseif game_state == "game_over" then
+		if btnp(🅾️) or btnp(❎) then
+			game_state = "menu"
+		end
+	end
+end
+
+function _draw()
+	if game_state == "menu" then
+		menu_draw()
+	elseif game_state == "game" then
+		game_draw()
+	elseif game_state == "paused" then
+		pause_draw()
+	elseif game_state == "game_over" then
+		game_over_draw()
+	end
+end
+
+function game_init()
 	stri = {sx=48,sy=32,x=64,y=115,dx=0,dy= 0,r=5, c=7,speed=0.5,accel=0.3,friction=0.015,state="initializing",ani=false,ani_x=0,ani_y=0,inhole=false}
 	--stri.state = "positioning" or "aiming" or "simulating" or "initializing"
 	p_red = {sx=32,sy=32,x=64,y=64,r=5,c=8,dx=0,dy=0,friction=0.02,inhole=false,value=3}
@@ -72,7 +103,7 @@ function _init()
 	ai_timer = 0
 end
 
-function _update60()
+function game_update()
     if stri.state == "initializing" then
         update_piece_animations()
         if ani_timer > 150 and all_ani_stopped() then
@@ -84,6 +115,12 @@ function _update60()
     elseif not all_ani_stopped() then
         run_active_animations()
     elseif stri.state == "positioning" then
+		if btnp(❎) then
+            game_state = "paused"
+            pause_selection = 1
+            sfx(5)
+            return
+        end
         if p_turn.is_ai then
             ai_opponent_turn()
         else
@@ -106,12 +143,17 @@ function _update60()
             stri.ani_progress = 0
             stri.ani = true
             stri.inhole = false
-            switch_player()
+            if #p_white_pocketed >= 9 or #p_black_pocketed >= 9 then
+                game_state = "game_over"
+                -- victory sound (make sure sfx 6 exists or change ID)
+            else
+                switch_player()
+            end
         end
     end
 end
 
-function _draw()
+function game_draw()
 	cls(13)
 	map(0,0,0,0,16,16)
 	for h in all(holes) do draw_hole(h) end
@@ -142,7 +184,113 @@ function _draw()
 		end
 	end
 end
-  
+
+-->8
+--game menu functions
+function menu_update()
+	if btnp(⬆️) or btnp(⬇️) then
+		if menu_selection == 1 then menu_selection = 2 else menu_selection = 1 end
+		sfx(5) -- small click sound
+	end
+	
+	if btnp(🅾️) then
+		if menu_selection == 1 then
+			game_init() -- Reset board
+			game_state = "game"
+			sfx(1) -- start sound
+		else
+			-- Placeholder for setup/options
+		end
+	end
+end
+
+function menu_draw()
+	cls(1) -- Dark blue background
+	
+	local title = "carrom"
+	local x = 64 - (#title*4)/2
+	print(title, x, 30, 7)
+	
+	local c1, c2 = 6, 6
+	local cursor_y = 0
+	
+	if menu_selection == 1 then c1 = 7; cursor_y = 60
+	else c2 = 7; cursor_y = 75 end
+
+	--i want a retangle bar behind the text to highlight the selection using cursor_y
+	render_poly({30,cursor_y-4,98,cursor_y-4,98,cursor_y+8,30,cursor_y+8}, 8)
+	
+	local txt1 = "start game"
+	print(txt1, 64 - (#txt1*2), 60, c1)
+	
+	local txt2 = "options"
+	print(txt2, 64 - (#txt2*2), 75, c2)
+	
+	print(">", 35, cursor_y, 8)
+end
+function pause_draw()
+	
+	game_draw()
+	
+	rectfill(30, 30, 97, 97, 0)
+
+	local title = "- PAUSED -"
+	print(title, 64 - (#title * 2), 40, 7)
+
+	local c1, c2 = 6, 6
+	if pause_selection == 1 then c1 = 10 else c2 = 10 end
+
+	local txt1 = "RESUME"
+	print(txt1, 64 - (#txt1 * 2), 60, c1)
+	
+	local txt2 = "QUIT TO MENU"
+	print(txt2, 64 - (#txt2 * 2), 75, c2)
+	
+	-- Draw the selector arrow
+	if pause_selection == 1 then
+		print(">", 45, 60, 7)
+	else
+		print(">", 32, 75, 7)
+	end
+end
+function pause_update()
+	if btnp(⬆️) or btnp(⬇️) then
+		if pause_selection == 1 then pause_selection = 2 else pause_selection = 1 end
+		sfx(5)
+	end
+
+	-- Player presses the action button
+	if btnp(🅾️) then
+		if pause_selection == 1 then -- Resume
+			game_state = "game"
+		elseif pause_selection == 2 then -- Quit to Menu
+			game_state = "menu"
+		end
+		sfx(1)
+	end
+
+    -- Also allow resuming with the back button
+    if btnp(❎) then
+        game_state = "game"
+        sfx(1)
+    end
+end
+
+function game_over_draw()
+	cls(0)
+	local winner = ""
+	if #p_white_pocketed >= 9 then winner = p1.name
+	else winner = p2.name end
+	
+	local txt = "game over"
+	print(txt, 64-(#txt*2), 50, 7)
+	
+	txt = winner.." wins!"
+	print(txt, 64-(#txt*2), 65, 10)
+	
+	txt = "press ❎ or 🅾️"
+	print(txt, 64-(#txt*2), 90, 6)
+end
 -->8
 --physics functions
 function universal_physics()
@@ -552,10 +700,51 @@ end
 -->8
 --game logic
 function switch_player()
+	local is_foul = false
+	local player_succeeded_this_turn = pieces_pocketed_this_turn > 0
+
+	-- 1. Check for standard striker foul
 	if pieces_pocketed_this_turn < 0 then
+		is_foul = true
 		handle_striker_foul()
 	end
-	local player_succeeded_this_turn = pieces_pocketed_this_turn > 0
+
+	-- 2. NEW LOGIC: Check if player cleared their pieces but left the red one
+	local active_list, pocketed_list
+	if p_turn.piece == 'white' then
+		active_list = p_white
+		pocketed_list = p_white_pocketed
+	else
+		active_list = p_black
+		pocketed_list = p_black_pocketed
+	end
+
+	-- If all 9 of their pieces are pocketed but the red piece is still on the board, it's a foul.
+	if #active_list == 0 and not p_red.inhole then
+		is_foul = true
+		sfx(3) -- Foul sound
+
+		-- Return one of their pocketed pieces to the board as a penalty
+		if #pocketed_list > 0 then
+			local penalty_piece = deli(pocketed_list) -- remove the last piece they pocketed
+			local new_x, new_y = find_open_spot_for_piece(penalty_piece)
+			
+			-- Set up animation to place it back on the board
+			penalty_piece.start_x = penalty_piece.x
+			penalty_piece.start_y = penalty_piece.y
+			penalty_piece.ani_x = new_x
+			penalty_piece.ani_y = new_y
+			penalty_piece.ani_progress = 0
+			penalty_piece.ani = true
+			penalty_piece.dx = 0
+			penalty_piece.dy = 0
+			penalty_piece.inhole = false
+			
+			add(active_list, penalty_piece) -- Add it back to the active pieces list
+		end
+	end
+
+	-- 3. Handle red piece confirmation (covering the queen)
 	if red_pocketed_this_turn then
 		local player_color_also_pocketed = false
 		for p in all(pocketed_in_turn) do
@@ -572,9 +761,12 @@ function switch_player()
 		if player_succeeded_this_turn then
 			red_needs_confirmation = false
 		else
+			-- Penalty for not covering the red piece
 			p_turn.score -= p_red.value 
 			local new_x, new_y = find_open_spot_for_piece(p_red)
 			
+			p_red.dx = 0
+			p_red.dy = 0
 			p_red.start_x = p_red.x
 			p_red.start_y = p_red.y
 			p_red.ani_x = new_x
@@ -585,13 +777,17 @@ function switch_player()
 			red_needs_confirmation = false
 		end
 	end
-	if not player_succeeded_this_turn then
+
+	-- 4. Switch player if they didn't succeed OR if they committed any foul
+	if not player_succeeded_this_turn or is_foul then
 		if p_turn.name == p1.name then
 			p_turn = p2
 		else
 			p_turn = p1
 		end
 	end
+
+	-- 5. Reset striker position for the next player
 	if p_turn.name == p1.name then
 		-- Player 1's turn
 		stri.ani_y = 115
