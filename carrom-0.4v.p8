@@ -1012,17 +1012,10 @@ function evaluate_shot(striker_x, striker_y, piece, hole)
 
     for other_p in all(all_pieces) do
         if other_p != piece then
-            if is_path_obstructed(striker_x, striker_y, target_x, target_y, other_p) then
+            if is_path_obstructed(striker_x, striker_y, target_x, target_y, other_p) 
+			or is_path_obstructed(target_x, target_y, hole.x, hole.y, other_p)
+			then
                 score -= 1200
-                break 
-            end
-        end
-    end
-
-    for other_p in all(all_pieces) do
-        if other_p != piece then
-            if is_path_obstructed(piece.x, piece.y, hole.x, hole.y, other_p) then
-                score -= 1200 
                 break 
             end
         end
