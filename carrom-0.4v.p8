@@ -23,6 +23,8 @@ end
 function _update60()
 	if game_state == "menu" then
 		menu_update()
+	elseif game_state == "transition_to_game" then
+		transition_to_game_update()
 	elseif game_state == "game" then
 		game_update()
 	elseif game_state == "paused" then
@@ -37,6 +39,8 @@ end
 function _draw()
 	if game_state == "menu" then
 		menu_draw()
+	elseif game_state == "transition_to_game" then
+		transition_to_game_draw()
 	elseif game_state == "game" then
 		game_draw()
 	elseif game_state == "paused" then
@@ -49,7 +53,7 @@ end
 function game_init()
 	stri = {sx=48,sy=32,x=64,y=115,dx=0,dy= 0,r=5, c=7,speed=0.5,accel=0.3,friction=0.015,state="initializing",ani=false,ani_x=0,ani_y=0,inhole=false}
 	--stri.state = "positioning" or "aiming" or "simulating" or "initializing"
-	p_red = {sx=32,sy=32,x=64,y=64,r=5,c=8,dx=0,dy=0,friction=0.02,inhole=false,value=3}
+	p_red = {sx=32,sy=32,x=64,y=64,r=5,c=8,dx=0,dy=0,friction=0.02,inhole=false,value=3, ani_x=64, ani_y=64}
 	p_white = {}
 	p_black = {}
 	p_white_pocketed = {}
@@ -61,7 +65,7 @@ function game_init()
 		{x=122,y=122,r=6,c=7,effect_f=0}
 	}
 	ani_timer = 0
-	local start_angle = 30 
+	local start_angle = rnd(360) 
 	local start_rotation = start_angle / 360
 	local center_x, center_y = 64, 64
 	local radius = 10
@@ -116,10 +120,24 @@ function game_init()
 	ai_target_angle = 0
 	ai_shot_power = 0
 	ai_timer = 0
+	game_timer = 0
+
+	-- Piece rotation system
+	piece_rotation = 0 -- Current rotation angle in degrees
+	rotation_speed = 2 -- Degrees per frame when rotating
+	is_rotating = false -- Whether rotation is currently active
+	rotation_allowed = true -- Whether rotation is allowed (only at start)
 end
 
 function game_update()
-    if stri.state == "initializing" then
+	game_timer += 1
+	if (stri.state != "aiming" or p_turn.is_ai) and btnp(❎) then
+		game_state = "paused"
+		pause_selection = 1
+		sfx(5)
+		return
+	end
+	if stri.state == "initializing" then
         update_piece_animations()
         if ani_timer > 150 and all_ani_stopped() then
             stri.state = "positioning"
@@ -130,16 +148,13 @@ function game_update()
     elseif not all_ani_stopped() then
         run_active_animations()
     elseif stri.state == "positioning" then
-		if btnp(❎) then
-            game_state = "paused"
-            pause_selection = 1
-            sfx(5)
-            return
-        end
         if p_turn.is_ai then
             ai_opponent_turn()
         else
             move_con()
+            if rotation_allowed then
+				rotate_con()
+            end
         end
     elseif stri.state == "aiming" then
         if p_turn.is_ai then
@@ -159,6 +174,7 @@ function game_update()
             stri.ani = true
             stri.inhole = false
             switch_player()
+			game_timer = 0
         end
     end
 end
@@ -219,7 +235,8 @@ function menu_update()
 	if btnp(🅾️) then
 		if menu_selection == 3 then
 			game_init() -- Reset board
-			game_state = "game"
+			game_state = "transition_to_game"
+			play_transition_timer = 0
 			sfx(1) -- start sound
 		end
 	end
@@ -416,6 +433,58 @@ function make_dither_transition_instance()
         fillp() -- reset fillp
     end
 end
+
+function make_play_transition_instance()
+    local s={t=0,phase="expanding",center_x=64,center_y=64,
+        radius=0,max_radius=128,expand_speed=120,contract_speed=120,
+        wait_timer=0,wait_duration=0}
+    local self={}
+    function self.update()
+        local dt=1/30
+        if s.phase=="expanding" then
+            s.radius+=s.expand_speed*dt
+            if s.radius>=s.max_radius then
+                s.radius,s.phase,s.wait_timer=s.max_radius,"waiting",0
+            end
+        elseif s.phase=="waiting" then
+            s.wait_timer+=dt
+            if s.wait_timer>=s.wait_duration then s.phase="contracting" end
+        elseif s.phase=="contracting" then
+            s.radius-=s.contract_speed*dt
+            if s.radius<=0 then
+                s.radius,s.phase=0,"expanding"
+                return true
+            end
+        end
+        return false
+    end
+    function self.draw()
+        local r=flr(s.radius)
+        if r>0 then circfill(s.center_x,s.center_y,r,1) end
+    end
+    function self.get_phase() return s.phase end
+    return self
+end
+
+play_transition=make_play_transition_instance()
+
+function transition_to_game_update()
+    if play_transition.update() then game_state="game" end
+end
+
+function transition_to_game_draw()
+    local current_phase = play_transition.get_phase()
+    if current_phase == "expanding" then
+    elseif current_phase == "waiting" then
+    elseif current_phase == "contracting" then
+		cls(13)
+        map(0,0,0,0,16,16)
+		for h in all(holes) do draw_hole(h) end
+    end
+    play_transition.draw()
+end
+
+
 function text_outline(txt, x, y, col, outline_col)
 	outline_col = outline_col or 0
 	-- Draw outline
@@ -590,10 +659,10 @@ function move_con()
 	
 	if btn(⬅️) and not btn(➡️) then
 		stri.dx-=stri.accel
-		arrow_pause=time()+3
+		arrow_pause=game_timer+180
 	elseif btn(➡️) and not btn(⬅️) then
 		stri.dx+=stri.accel
-		arrow_pause=time()+3
+		arrow_pause=game_timer+180
 	else 
 		stri.dx*= stri.friction 
 	end
@@ -625,6 +694,51 @@ function aim_con()
 	else aim.c= 3 end
 end
     
+-->8
+--control functions
+
+function rotate_con()
+    -- Check if the UP or DOWN buttons are being held.
+	if btn(⬆️) or btn(⬇️) then
+        is_rotating = true -- We are actively rotating.
+
+        -- Determine the direction of rotation. Up = counter-clockwise, Down = clockwise.
+        local rotation_dir = btn(⬆️) and -1 or 1
+        local angle_change = rotation_speed * rotation_dir
+
+        -- Update the global rotation angle.
+        piece_rotation = (piece_rotation + angle_change) % 360
+
+        -- Loop through all pieces on the board and apply the rotation.
+        for p in all(p_white) do rotate_piece_around_center(p) end
+        for p in all(p_black) do rotate_piece_around_center(p) end
+        if not p_red.inhole then rotate_piece_around_center(p_red) end
+
+    else
+        -- If no rotation buttons are held, stop rotating.
+        is_rotating = false
+    end
+end
+
+-- This helper function performs the correct mathematical rotation for a single piece.
+function rotate_piece_around_center(p)
+    local center_x, center_y = 64, 64
+    local angle_rad = piece_rotation / 360 -- Convert degrees to PICO-8's 0-1 rotation format
+
+    -- To avoid drift, we first get the piece's original spawn position based on its 'ani_x' and 'ani_y'
+    -- This acts as a fixed anchor for our rotation.
+    local relative_x = p.ani_x - center_x
+    local relative_y = p.ani_y - center_y
+
+    -- Apply the standard 2D rotation formula
+    local rotated_x = relative_x * cos(angle_rad) - relative_y * sin(angle_rad)
+    local rotated_y = relative_x * sin(angle_rad) + relative_y * cos(angle_rad)
+
+    -- Update the piece's actual position relative to the center
+    p.x = center_x + rotated_x
+    p.y = center_y + rotated_y
+end
+
 function shoot_con()
 	if btnp(🅾️) then
 		red_pocketed_this_turn = false
@@ -635,7 +749,9 @@ function shoot_con()
 		local angle = aim.ang / 360
 		stri.dx = cos(angle) * power
 		stri.dy = sin(angle) * power
-		
+
+		-- Disable rotation after first shot
+		rotation_allowed = false
 		stri.state = "simulating"
 		sfx(0)
 	elseif btnp(❎) then
@@ -816,7 +932,7 @@ function run_active_animations()
 				if p_turn.is_ai then
 					ai_state = "positioning"
 				else
-					arrow_pause=time()+3
+					arrow_pause=game_timer+180
 				end
 			end
 		end
@@ -1047,13 +1163,15 @@ function ai_opponent_turn()
             ai_target_angle = best_shot.angle
             ai_shot_power = best_shot.power
             ai_state = "aiming"
-            ai_timer = time() + 1
+            -- Wait 1 second (60 frames) before aiming
+            ai_timer = game_timer + 60 
         else
             stri.x = 32 + rnd(64)
             ai_target_angle = 270 + rnd(20) - 10
             ai_shot_power = 30 + rnd(20)
             ai_state = "aiming"
-            ai_timer = time() + 1 
+            -- Wait 1 second (60 frames) before aiming
+            ai_timer = game_timer + 60
         end
         stri.state = "aiming"
 	elseif ai_state == "aiming" then
@@ -1063,15 +1181,17 @@ function ai_opponent_turn()
         aim.ang += angle_diff * 0.1
         aim.r = ai_shot_power
 		
-        local has_waited_long_enough = time() > ai_timer
+        local has_waited_long_enough = game_timer > ai_timer
         local is_aim_accurate = abs(angle_diff) < 5
-        local safety_timer_expired = time() > ai_timer + 2.0
+        -- Safety timer of 2 seconds (120 frames)
+        local safety_timer_expired = game_timer > ai_timer + 120
         if (has_waited_long_enough and is_aim_accurate) or safety_timer_expired then
             ai_state = "shooting"
-            ai_timer = time() + 0.5
+            -- Wait 0.5 seconds (30 frames) before shooting
+            ai_timer = game_timer + 30
         end
     elseif ai_state == "shooting" then
-        if time() > ai_timer then
+        if game_timer > ai_timer then
             red_pocketed_this_turn = false
             pieces_pocketed_this_turn = 0
             pocketed_in_turn = {}
@@ -1339,4 +1459,3 @@ __sfx__
 000100001b05015050100500b050040500d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __music__
 00 01424344
-
