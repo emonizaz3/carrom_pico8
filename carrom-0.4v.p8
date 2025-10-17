@@ -4,7 +4,20 @@ __lua__
 -- carrom game
 function _init()
 	game_state = "menu"
-	menu_selection = 1
+	menu_selection = 3 -- 1: p1, 2: p2, 3: play
+	p1_type = "human"
+    p2_type = "computer"
+	stars = {}
+	for i=1,9 do
+		stars[i] = {
+			x = rnd(138) - 10,
+			y = rnd(138) - 10,
+			speed = rnd(0.5) + 0.6,
+			sprite = flr(rnd(2)) * 16
+		}
+	end
+	dither_bg_transition = make_dither_transition_instance()
+    dither_rect_transition = make_dither_transition_instance()
 end
 
 function _update60()
@@ -88,7 +101,9 @@ function game_init()
 	aim={r=20.5,c=8,ang=90,speed=0,accel=0.3,friction=0.1}
 	arrow_pause=3
 	p1 = {name="Player 1",score=0,piece='white',is_ai=false}
-	p2 = {name="Player 2",score=0,piece='black',is_ai=true}
+	p2 = {name="Player 2",score=0,piece='black',is_ai=false}
+	if p1_type == "computer" then p1.is_ai = true end
+	if p2_type == "computer" then p2.is_ai = true end
 	p_turn = p1
 	pieces_pocketed_this_turn = 0
 	pocketed_in_turn = {}
@@ -183,50 +198,98 @@ end
 -->8
 --game menu functions
 function menu_update()
-	if btnp(⬆️) or btnp(⬇️) then
-		if menu_selection == 1 then menu_selection = 2 else menu_selection = 1 end
-		sfx(5) -- small click sound
+	if btnp(⬆️) then
+		menu_selection -= 1
+		if menu_selection < 1 then menu_selection = 3 end
+		sfx(5)
+	elseif btnp(⬇️) then
+		menu_selection += 1
+		if menu_selection > 3 then menu_selection = 1 end
+		sfx(5)
 	end
-	
-	if btnp(🅾️) then
+	if btnp(⬅️) or btnp(➡️) then
 		if menu_selection == 1 then
+			p1_type = (p1_type == "human") and "computer" or "human"
+			sfx(5)
+		elseif menu_selection == 2 then
+			p2_type = (p2_type == "human") and "computer" or "human"
+		end
+	end
+
+	if btnp(🅾️) then
+		if menu_selection == 3 then
 			game_init() -- Reset board
 			game_state = "game"
 			sfx(1) -- start sound
-		else
-			-- Placeholder for setup/options
+		end
+	end
+
+	for star in all(stars) do
+		star.y += star.speed
+		if star.y > 128 then
+			star.y = -10
+			star.x = rnd(138)-10
+			star.speed = rnd(0.5) + 0.4
 		end
 	end
 end
 
 function menu_draw()
 	cls(1) -- Dark blue background
+	dither_bg_transition(0,0,128,128,"diag", 10,10)
+	for star in all(stars) do
+		sspr(star.sprite, 32, 11, 11, star.x, star.y)
+	end
+
 	local title = "carrom"
 	local x = 64 - (#title*4)/2
 	print(title, x, 30, 7)
 	palt(0,false)
 	palt(1,true)
-	sspr(0,108,57,20,64-57,9,114,40)
+	-- sspr(0,108,57,20,64-57,9,114,40)
+	sspr(0,114,37,13,64-57,21,74,26)
+	sspr(36,108,10,13,79,11 + sin((time() * 0.22)) * 4,20,26) --animate logo here
+	sspr(45,114,12,13,97,21,24,26)
 	draw_aimline(34,14,43,360,8)
 	sspr(0,95,28,10,10,10)
 	palt(0,true)
 	palt(1,false)
-	local c1, c2 = 6, 6
-	local cursor_y = 0
+
+
+	rect(24,51,104,103,7)
+	dither_rect_transition(25,52,40,51,"ltr", 40,20)
+	dither_rect_transition(64,52,40,51,"rtl", 40,20)
+	rectfill(28,54,100,100,7)
+	rectfill(29,55,99,99,6)
 	
+
+	--menu options
+	local c1, c2 , c3= 7, 7,7
+	local cursor_y = 0
+
 	if menu_selection == 1 then c1 = 7; cursor_y = 60
-	else c2 = 7; cursor_y = 75 end
+	elseif menu_selection == 2 then c2 = 7; cursor_y = 75
+	else c3 = 7; cursor_y = 90 end
 
 	--i want a retangle bar behind the text to highlight the selection using cursor_y
-	render_poly({30,cursor_y-4,98,cursor_y-4,98,cursor_y+8,30,cursor_y+8}, 8)
-	
-	local txt1 = "start game"
-	print(txt1, 64 - (#txt1*2), 60, c1)
-	
-	local txt2 = "options"
-	print(txt2, 64 - (#txt2*2), 75, c2)
-	
-	print(">", 35, cursor_y, 8)
+	rectfill(45+2,cursor_y-5+2,99-2,cursor_y+9-2, 13)
+	local offset = 9
+	local txt1 = p1_type
+	text_outline(txt1, 64 - (#txt1*2) + offset, 60, c1,1)
+	sspr(0,32,11,11,34, 57,11,11)
+
+	local txt2 = p2_type
+	text_outline(txt2, 64 - (#txt2*2) + offset, 75, c2,1)
+	sspr(16,32,11,11,34,72,11,11)
+
+	local txt3 = "play"
+	text_outline(txt3, 64 - (#txt3*2) + offset, 90, 7,1)
+
+	if menu_selection == 3 then
+	else
+		print("<", 50 + sin((time() * 0.65)) * 1, cursor_y , 7)
+		print(">", 93 - sin((time() * 0.65)) * 1, cursor_y , 7)
+	end
 end
 function pause_draw()
 	
@@ -290,6 +353,82 @@ function game_over_draw()
 	
 	txt = "press ❎ or 🅾️"
 	print(txt, 64-(#txt*2), 90, 6)
+end
+function make_dither_transition_instance()
+    -- Each instance will have its own 'state' table,
+    -- which is "closed over" by the returned function.
+    local instance_state = {
+        old_col = flr(rnd(16)),
+        new_col = flr(rnd(16)),
+        old_pat = flr(rnd(0xffff)),
+        new_pat = flr(rnd(0xffff)),
+        t = 0,
+        phase = "transition", -- "transition" or "pause"
+        timer = 10,
+    }
+
+    -- This is the actual function that will draw the transition,
+    -- but it uses its own instance_state.
+    return function(x, y, w, h, dir, speed, pause_time)
+        local dt = 1/30 -- PICO-8 runs at 30fps
+
+        if instance_state.phase == "transition" then
+            instance_state.t += speed * dt
+            if instance_state.t > w then
+                instance_state.t = w
+                instance_state.phase = "pause"
+                instance_state.timer = 0
+            end
+        elseif instance_state.phase == "pause" then
+            instance_state.timer += dt
+            if instance_state.timer >= pause_time then
+                -- reset for next transition
+                instance_state.t = 0
+                instance_state.phase = "transition"
+                instance_state.old_col = instance_state.new_col
+                instance_state.old_pat = instance_state.new_pat
+                instance_state.new_col = flr(rnd(16))
+                instance_state.new_pat = flr(rnd(0xffff))
+            end
+        end
+        local cols = flr(instance_state.t)
+        -- draw old pattern/color
+        fillp(instance_state.old_pat)
+        rectfill(x, y, x + w - 1, y + h - 1, instance_state.old_col)
+        -- draw new pattern/color sliding
+        fillp(instance_state.new_pat)
+        if dir == "rtl" then
+            rectfill(x + w - cols, y, x + w - 1, y + h - 1, instance_state.new_col)
+        elseif dir == "ltr" then
+            rectfill(x, y, x + cols - 1, y + h - 1, instance_state.new_col)
+        elseif dir == "ttb" then
+            rectfill(x, y + h - cols, x + w - 1, y + h - 1, instance_state.new_col)
+        elseif dir == "btt" then
+            rectfill(x, y, x + w - 1, y + cols - 1, instance_state.new_col)
+        elseif dir == "diag" then
+            for i=0,cols do
+                line(x+i,y,x,y+i,instance_state.new_col)
+                line(x+w-i,y+h,x+w,y+h-i,instance_state.new_col)
+                line(x+w-i,y,x+w,y+i,instance_state.new_col)
+                line(x+i,y+h,x,y+h-i,instance_state.new_col)
+            end
+        end
+        fillp() -- reset fillp
+    end
+end
+function text_outline(txt, x, y, col, outline_col)
+	outline_col = outline_col or 0
+	-- Draw outline
+	print(txt, x - 1, y, outline_col)
+	print(txt, x + 1, y, outline_col)
+	print(txt, x, y - 1, outline_col)
+	print(txt, x, y + 1, outline_col)
+	print(txt, x - 1, y - 1, outline_col)
+	print(txt, x + 1, y - 1, outline_col)
+	print(txt, x - 1, y + 1, outline_col)
+	print(txt, x + 1, y + 1, outline_col)
+	-- Draw main text
+	print(txt, x, y, col)
 end
 -->8
 --physics functions
