@@ -7,6 +7,7 @@ function _init()
 	menu_selection = 3 -- 1: p1, 2: p2, 3: play
 	p1_type = "human"
     p2_type = "computer"
+	game_mode = "classic"
 	stars = {}
 	for i=1,9 do
 		stars[i] = {
@@ -25,6 +26,8 @@ function _update60()
 		menu_update()
 	elseif game_state == "transition_to_game" then
 		transition_to_game_update()
+	elseif game_state == "transition_to_menu" then
+		transition_to_menu_update()
 	elseif game_state == "game" then
 		game_update()
 	elseif game_state == "paused" then
@@ -41,6 +44,8 @@ function _draw()
 		menu_draw()
 	elseif game_state == "transition_to_game" then
 		transition_to_game_draw()
+	elseif game_state == "transition_to_menu" then
+		transition_to_menu_draw()
 	elseif game_state == "game" then
 		game_draw()
 	elseif game_state == "paused" then
@@ -236,6 +241,7 @@ function menu_update()
 	if btnp(🅾️) then
 		if menu_selection == 3 then
 			game_init() -- Reset board
+			play_transition.reset()
 			game_state = "transition_to_game"
 			play_transition_timer = 0
 			sfx(1) -- start sound
@@ -368,7 +374,8 @@ function pause_update()
 		if pause_selection == 1 then -- Resume
 			game_state = "game"
 		elseif pause_selection == 2 then -- Quit to Menu
-			game_state = "menu"
+			play_transition.reset()
+			game_state = "transition_to_menu"
 		end
 		sfx(1)
 	end
@@ -477,6 +484,13 @@ function make_play_transition_instance()
         radius=0,max_radius=128,expand_speed=120,contract_speed=120,
         wait_timer=0,wait_duration=0}
     local self={}
+    function self.reset()
+        s.t=0
+        s.phase="expanding"
+        s.radius=0
+        s.wait_timer=0
+    end
+    self.reset()
     function self.update()
         local dt=1/30
         if s.phase=="expanding" then
@@ -518,6 +532,21 @@ function transition_to_game_draw()
 		cls(13)
         map(0,0,0,0,16,16)
 		for h in all(holes) do draw_hole(h) end
+    end
+    play_transition.draw()
+end
+
+function transition_to_menu_update()
+    if play_transition.update() then
+        game_state = "menu"
+        pause_selection = 1
+    end
+end
+
+function transition_to_menu_draw()
+    local current_phase = play_transition.get_phase()
+    if current_phase == "contracting" then
+        menu_draw()
     end
     play_transition.draw()
 end
@@ -1519,4 +1548,3 @@ __sfx__
 000100001b05015050100500b050040500d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __music__
 00 01424344
-
